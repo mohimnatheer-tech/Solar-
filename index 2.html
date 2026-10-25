@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><title>Sun Tracker | متتبع الشمس</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: slim top bar (brand, language, display mode). Left column: stage with two live views, control deck, power chart. Right column: sensors, motors, output. Docs tabs below. */
+:root{
+  --bg:#edf0f5; --surface:#ffffff; --surface2:#f4f6f9; --fg:#14202e; --muted:#5b6b7d; --line:#dbe1e8;
+  --accent:#f2a007; --on-accent:#1c1300; --cell:#2a5fb0; --good:#1f9d6b; --warn:#d9622b;
+  --sky-day:#cfe6ff; --sky-night:#0f1b33; --ground:#c5d0db; --oled:#05070b;
+  --font:"Readex Pro",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0b111b; --surface:#121b29; --surface2:#182234; --fg:#e7edf5; --muted:#8a9bb0; --line:#223045;
+  --accent:#ffb938; --on-accent:#1c1300; --cell:#6aa2ff; --good:#46d6a0; --warn:#ff8f5a;
+  --sky-day:#1d3a63; --sky-night:#070c16; --ground:#1a2636; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b111b; --surface:#121b29; --surface2:#182234; --fg:#e7edf5; --muted:#8a9bb0; --line:#223045;
+  --accent:#ffb938; --on-accent:#1c1300; --cell:#6aa2ff; --good:#46d6a0; --warn:#ff8f5a;
+  --sky-day:#1d3a63; --sky-night:#070c16; --ground:#1a2636; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:14px;line-height:1.6;
+  padding-block:16px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.app{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+[dir=rtl] .lbl{letter-spacing:0;font-size:12px}
+.num{font-family:var(--mono);direction:ltr;unicode-bidi:isolate;font-variant-numeric:tabular-nums}
+
+/* top bar */
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;margin-inline-end:auto;min-width:0}
+.logo{width:38px;height:38px;border-radius:11px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;flex:none}
+.logo i{width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 22%,transparent)}
+.brand h1{font-size:18px;line-height:1.2;margin:0;font-weight:600}
+.brand p{margin:0;color:var(--muted);font-size:12.5px}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:none;color:var(--muted);padding:5px 12px;border-radius:7px;font:inherit;font-size:13px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+button{font:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--cell);outline-offset:2px}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:7px 14px;border-radius:10px;font-size:13px}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:500}
+.btn[aria-pressed=true]:not(.primary){background:var(--fg);color:var(--bg);border-color:var(--fg)}
+
+/* layout */
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+@media(max-width:940px){.layout{grid-template-columns:minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;min-width:0}
+.card>header{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
+.card h2{margin:0;font-size:14px;font-weight:600}
+
+/* stage */
+.views{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.views{grid-template-columns:1fr}}
+.vw{position:relative;min-width:0}
+.vw .tag{position:absolute;top:10px;inset-inline-start:12px;z-index:1;display:flex;gap:8px;align-items:center;pointer-events:none}
+.vw .tag b{font-weight:500;font-size:12px;color:var(--fg)}
+.vw .tag span{font-size:12px;color:var(--muted)}
+canvas{display:block;width:100%;border-radius:12px;background:var(--surface2);touch-action:none;cursor:grab}
+.hint{margin:10px 0 0;color:var(--muted);font-size:12px}
+
+/* controls */
+.deck{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:20px 28px}
+.grp{display:flex;flex-direction:column;gap:12px;min-width:0}
+.f label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--muted);margin-bottom:2px}
+.f b{color:var(--fg);font-weight:500;font-size:12.5px}
+input[type=range]{width:100%;direction:ltr;accent-color:var(--accent);height:22px;margin:0}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+
+.tp{display:grid;grid-template-columns:auto minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:16px 20px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+@media(max-width:760px){.tp{grid-template-columns:1fr 1fr}.tp .btns,.tp .wide{grid-column:1/-1}}
+details.card summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+details.card summary::-webkit-details-marker{display:none}
+details.card summary::after{content:"+";color:var(--muted);font-size:18px;line-height:1}
+details.card[open] summary::after{content:"–"}
+details.card[open] summary{margin-bottom:14px}
+.btn,.seg button,.tabs button{transition:background .15s,border-color .15s,color .15s}
+.gauge .track i{transition:height .08s linear}
+/* chart */
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-inline-end:6px}
+.gain{padding:3px 10px;border-radius:999px;background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good);font-weight:500;font-size:12.5px}
+.energy{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.energy div{background:var(--surface2);border-radius:10px;padding:10px 12px}
+.energy b{display:block;font-size:17px;font-weight:500;margin-top:2px}
+
+/* side cards */
+.out{display:flex;flex-direction:column;gap:12px}
+.oled{background:var(--oled);color:#8cf3ff;border-radius:12px;padding:12px 14px;border:1px solid #28323c;direction:ltr;text-align:left;font-family:var(--mono);font-size:12px}
+.oled .big{font-size:28px;color:#fff;line-height:1.2;margin:2px 0}
+.oled .row{display:flex;justify-content:space-between}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;background:var(--surface2);color:var(--muted)}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.run{color:var(--accent)}.chip.ok{color:var(--good)}.chip.idle{color:var(--muted)}
+.gauges{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.gauge{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.track{width:100%;max-width:56px;height:96px;background:var(--surface2);border-radius:10px;position:relative;overflow:hidden;direction:ltr}
+.track i{position:absolute;inset:auto 0 0 0;height:0;background:linear-gradient(to top,color-mix(in srgb,var(--accent) 60%,transparent),var(--accent));border-radius:0}
+.gauge b{color:var(--fg);font-weight:500;font-size:13px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:baseline}
+.kv span{color:var(--muted);font-size:13px}.kv b{font-weight:500}
+.leds{display:flex;gap:8px;align-items:center}
+.led{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.led.on{background:#ff4f87;box-shadow:0 0 10px #ff4f87}
+
+/* docs */
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:-4px 0 16px}
+.tabs button{border:0;background:none;color:var(--muted);padding:8px 14px;font-size:13.5px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent);font-weight:500}
+.how{max-width:70ch}.how p{margin:0 0 10px}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+code{font-family:var(--mono);direction:ltr;unicode-bidi:isolate;font-size:12.5px}
+pre{direction:ltr;text-align:left;font-family:var(--mono);font-size:12.5px;line-height:1.6;background:var(--surface2);border-radius:12px;padding:16px;margin:0;overflow-x:auto}
+.foot{color:var(--muted);font-size:12px;text-align:center}
+
+body.display .deck-card,body.display .tp,body.display #docs,body.display .hint,body.display .foot{display:none}
+body.display .app{max-width:1500px}
+body.display .layout{grid-template-columns:minmax(0,1fr) 380px}
+@media(max-width:940px){body.display .layout{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+
+<div class="app">
+  <div class="bar">
+    <div class="brand">
+      <div class="logo"><i></i></div>
+      <div><h1 data-i="title"></h1><p data-i="subtitle"></p></div>
+    </div>
+    <div class="seg" role="group" aria-label="Language">
+      <button id="lAr" aria-pressed="true">العربية</button>
+      <button id="lEn" aria-pressed="false">English</button>
+    </div>
+    <button class="btn" id="show" aria-pressed="false"><span data-i="display"></span></button>
+  </div>
+
+  <div class="layout">
+    <div class="col">
+      <section class="card">
+        <header><h2 data-i="stage"></h2><span class="chip idle" id="state"></span></header>
+        <div class="views">
+          <div class="vw"><div class="tag"><b data-i="topView"></b><span class="num" id="azTxt"></span></div><canvas id="cTop"></canvas></div>
+          <div class="vw"><div class="tag"><b data-i="sideView"></b><span class="num" id="elTxt"></span></div><canvas id="cSide"></canvas></div>
+        </div>
+        <div class="tp">
+          <div class="btns">
+            <button class="btn primary" id="play" aria-pressed="true"></button>
+            <button class="btn" id="track" aria-pressed="true"></button>
+          </div>
+          <div class="f wide"><label for="hr"><span data-i="clock"></span><b class="num" id="clock"></b></label><input id="hr" type="range" min="6" max="18" step="0.05" value="7"></div>
+          <div class="f"><label for="sp"><span data-i="speed"></span><b class="num" id="spv"></b></label><input id="sp" type="range" min="1" max="6" value="2"></div>
+          <div class="f"><label for="cl"><span data-i="clouds"></span><b class="num" id="clv"></b></label><input id="cl" type="range" min="0" max="90" value="0"></div>
+        </div>
+        <p class="hint" data-i="drag"></p>
+      </section>
+
+      <details class="card deck-card" id="adv">
+        <summary><span data-i="gAdv"></span></summary>
+        <div class="deck">
+          <div class="grp">
+            <span class="lbl" data-i="gSun"></span>
+            <div class="f"><label for="sA"><span data-i="azimuth"></span><b class="num" id="sAv"></b></label><input id="sA" type="range" min="0" max="359" value="120"></div>
+            <div class="f"><label for="sE"><span data-i="elevation"></span><b class="num" id="sEv"></b></label><input id="sE" type="range" min="0" max="90" value="35"></div>
+          </div>
+          <div class="grp">
+            <span class="lbl" data-i="gData"></span>
+            <button class="btn" id="reset"><span data-i="reset"></span></button>
+          </div>
+        </div>
+      </details>
+
+      <section class="card">
+        <header><h2 data-i="chartTitle"></h2><span class="gain num" id="gain"></span></header>
+        <div class="legend">
+          <span><i style="background:var(--cell)"></i><span data-i="lTrack"></span></span>
+          <span><i style="background:var(--muted)"></i><span data-i="lFixed"></span></span>
+        </div>
+        <canvas id="cChart" style="cursor:default;margin-top:10px"></canvas>
+        <div class="energy">
+          <div><span class="lbl" data-i="eTrack"></span><b class="num" id="eT"></b></div>
+          <div><span class="lbl" data-i="eFixed"></span><b class="num" id="eF"></b></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="col">
+      <section class="card out">
+        <header style="margin:0"><h2 data-i="output"></h2><div class="leds"><span class="led" id="l1"></span><span class="led" id="l2"></span></div></header>
+        <div class="oled"><div class="row"><span>SUN TRACKER</span><span id="oT">--:--</span></div><div class="big" id="oP">0 mW</div><div id="oS">TRACKING</div></div>
+      </section>
+      <section class="card">
+        <header><h2 data-i="sensors"></h2><span class="lbl">A0 · A1 · A2</span></header>
+        <div class="gauges">
+          <div class="gauge"><div class="track"><i id="b0"></i></div><b class="num" id="v0">0</b><span data-i="top"></span></div>
+          <div class="gauge"><div class="track"><i id="b1"></i></div><b class="num" id="v1">0</b><span data-i="left"></span></div>
+          <div class="gauge"><div class="track"><i id="b2"></i></div><b class="num" id="v2">0</b><span data-i="right"></span></div>
+        </div>
+      </section>
+      <section class="card">
+        <header><h2 data-i="motors"></h2></header>
+        <div class="kv">
+          <span data-i="pan"></span><b class="num" id="pA"></b>
+          <span data-i="tilt"></span><b class="num" id="pE"></b>
+          <span data-i="err"></span><b class="num" id="err"></b>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="card" id="docs">
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-t="how" data-i="tHow"></button>
+      <button role="tab" aria-selected="false" data-t="wire" data-i="tWire"></button>
+      <button role="tab" aria-selected="false" data-t="code" data-i="tCode"></button>
+    </div>
+    <div id="t-how" class="how"><p data-i="how1"></p><p data-i="how2"></p><p data-i="how3"></p></div>
+    <div id="t-wire" class="tbl" hidden>
+      <table>
+        <tr><th data-i="thPart"></th><th data-i="thPin"></th><th data-i="thRole"></th></tr>
+        <tr><td>Arduino Uno</td><td>—</td><td data-i="r1"></td></tr>
+        <tr><td data-i="p2"></td><td><code>A0, A1, A2</code></td><td data-i="r2"></td></tr>
+        <tr><td data-i="p3"></td><td><code>D2 – D5</code></td><td data-i="r3"></td></tr>
+        <tr><td data-i="p4"></td><td><code>D6 – D9</code></td><td data-i="r4"></td></tr>
+        <tr><td data-i="p5"></td><td><code>A4 (SDA), A5 (SCL)</code></td><td data-i="r5"></td></tr>
+        <tr><td data-i="p6"></td><td>—</td><td data-i="r6"></td></tr>
+        <tr><td data-i="p7"></td><td><code>D10, D11</code></td><td data-i="r7"></td></tr>
+      </table>
+    </div>
+    <div id="t-code" hidden><pre>#include &lt;Stepper.h&gt;
+
+const int STEPS = 2048;               // 28BYJ-48
+Stepper pan(STEPS, 2, 4, 3, 5);
+Stepper tilt(STEPS, 6, 8, 7, 9);
+
+const int TOP = A0, LEFT = A1, RIGHT = A2;
+const int MIN_LIGHT = 60;             // below this: night / heavy cloud
+const int DEAD = 25;                  // dead band
+int tiltPos = 0;                      // steps, limit 0..512 (0..90 deg)
+
+void setup() {
+  pan.setSpeed(10);
+  tilt.setSpeed(10);
+}
+
+void loop() {
+  int t = analogRead(TOP);
+  int l = analogRead(LEFT);
+  int r = analogRead(RIGHT);
+  int sum = t + l + r;
+
+  if (sum / 3 &gt; MIN_LIGHT) {
+    int ex = r - l;                   // horizontal error
+    int ey = t - (l + r) / 2;         // vertical error
+
+    if (abs(ex) &gt; DEAD) pan.step(ex &gt; 0 ? 4 : -4);
+
+    if (abs(ey) &gt; DEAD) {
+      int d = ey &gt; 0 ? 4 : -4;
+      if (tiltPos + d &gt;= 0 &amp;&amp; tiltPos + d &lt;= 512) {
+        tilt.step(d);
+        tiltPos += d;
+      }
+    }
+  }
+  delay(20);
+}</pre></div>
+  </section>
+  <p class="foot" data-i="foot"></p>
+</div>
+
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const rad=d=>d*Math.PI/180, deg=r=>r*180/Math.PI, clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+
+/* ---------- i18n ---------- */
+const TX={
+ar:{title:'متتبع الشمس',subtitle:'محاكاة لوح شمسي يلاحق الشمس بـ Arduino',display:'⛶ وضع العرض',exit:'✕ خروج من العرض',
+ stage:'المشهد',topView:'منظر علوي',sideView:'منظر جانبي',drag:'اسحب الشمس بالماوس أو الإصبع في أي من المنظرين لتحريكها.',
+ gSun:'موضع الشمس',gAdv:'إعدادات متقدمة',gData:'البيانات',azimuth:'الاتجاه',elevation:'الارتفاع',gTime:'الزمن',clock:'الساعة',speed:'السرعة',gEnv:'الجو والتحكم',clouds:'الغيوم',
+ play:'▶ تشغيل اليوم',pause:'⏸ إيقاف',tracking:'التتبع',on:'يعمل',off:'متوقف',reset:'تصفير الطاقة',manual:'يدوي',
+ chartTitle:'القدرة عبر الوقت',lTrack:'لوح يتتبع',lFixed:'لوح ثابت (جنوب، ميل 30°)',eTrack:'طاقة المتتبع',eFixed:'طاقة الثابت',gainL:'مكسب',
+ output:'الناتج',sensors:'الحساسات (LDR)',top:'علوي',left:'يسار',right:'يمين',motors:'المحركات',pan:'محرك الاتجاه',tilt:'محرك الميل',err:'زاوية الخطأ',
+ stRun:'يتحرك',stHome:'يعود إلى الشروق',stOk:'متوافق مع الشمس',stIdle:'بانتظار الضوء',stLock:'التتبع متوقف',
+ tHow:'كيف يشتغل',tWire:'القطع والتوصيل',tCode:'كود Arduino',
+ how1:'الـ LDR الثلاثة مثبتة خلف اللوح بشكل مثلث وكل واحدة مائلة قليلاً عن الأخرى. إذا كانت الشمس أمام اللوح تماماً تعطي الثلاث قراءات متقاربة. إذا مالت الشمس إلى جهة تزيد قراءة المقاومة القريبة منها وتنقص الأخرى.',
+ how2:'الكود يحسب اتجاه الخطأ من فرق القراءات، ثم يحرك المحرك الأول للأفقي والثاني للعمودي إلى أن يقل الفرق عن حد صغير. عند الليل أو الغيوم الكثيفة تقل القراءات عن الحد الأدنى فيتوقف اللوح ولا يتحرك عبثاً. وعند غروب الشمس يرجع اللوح تلقائياً إلى وضع الشروق ليكون جاهزاً للصباح.',
+ how3:'سرعة الدوران في المحاكاة أسرع من الواقع، فمحرك 28BYJ-48 بطيء (حوالي 10 إلى 15 درجة بالثانية).',
+ thPart:'القطعة',thPin:'الوصلة',thRole:'الدور',
+ r1:'المتحكم',p2:'3 × LDR + مقاومة 10kΩ',r2:'مقسم جهد لكل مقاومة، قراءة الضوء',p3:'28BYJ-48 + ULN2003 (اتجاه)',r3:'تدوير القاعدة',
+ p4:'28BYJ-48 + ULN2003 (ميل)',r4:'إمالة اللوح',p5:'شاشة OLED I2C',r5:'عرض الحالة',p6:'لوح شمسي صغير 6V',r6:'المصدر المقاس',p7:'LED وردي × 2',r7:'إضاءة القاعدة عند الحركة',
+ foot:'الفكرة من فيديو @marceline_tech. المحاكاة والكود والتوصيل مكتوبة من جديد وقد تختلف عن النسخة الأصلية.',
+ N:'ش',E:'ق',S:'ج',W:'غ',horizon:'الأفق'},
+en:{title:'Sun Tracker',subtitle:'Arduino solar panel that follows the sun',display:'⛶ Display mode',exit:'✕ Exit display',
+ stage:'Scene',topView:'Top view',sideView:'Side view',drag:'Drag the sun with the mouse or your finger in either view to move it.',
+ gSun:'Sun position',gAdv:'Advanced settings',gData:'Data',azimuth:'Azimuth',elevation:'Elevation',gTime:'Time',clock:'Clock',speed:'Speed',gEnv:'Conditions & control',clouds:'Cloud cover',
+ play:'▶ Play day',pause:'⏸ Pause',tracking:'Tracking',on:'On',off:'Off',reset:'Reset energy',manual:'Manual',
+ chartTitle:'Power over time',lTrack:'Tracking panel',lFixed:'Fixed panel (south, 30° tilt)',eTrack:'Tracker energy',eFixed:'Fixed energy',gainL:'Gain',
+ output:'Output',sensors:'Sensors (LDR)',top:'Top',left:'Left',right:'Right',motors:'Motors',pan:'Pan motor',tilt:'Tilt motor',err:'Pointing error',
+ stRun:'Moving',stHome:'Returning to sunrise',stOk:'Aligned with sun',stIdle:'Waiting for light',stLock:'Tracking off',
+ tHow:'How it works',tWire:'Parts & wiring',tCode:'Arduino code',
+ how1:'Three LDRs sit behind the panel in a triangle, each tilted slightly away from the others. With the sun straight ahead, all three read about the same. When the sun drifts to one side, the nearest LDR reads higher and the others lower.',
+ how2:'The sketch turns those differences into a direction of error, then drives the first motor for left and right and the second for up and down until the difference falls under a small dead band. At night or under heavy cloud the readings drop below a minimum and the panel holds still. After sunset it swings back to the sunrise position, ready for the morning.',
+ how3:'The simulation turns faster than the real hardware. A 28BYJ-48 stepper is slow, around 10 to 15 degrees per second.',
+ thPart:'Part',thPin:'Pins',thRole:'Role',
+ r1:'Controller',p2:'3 × LDR + 10kΩ resistor',r2:'Voltage divider per sensor, reads light',p3:'28BYJ-48 + ULN2003 (pan)',r3:'Rotates the base',
+ p4:'28BYJ-48 + ULN2003 (tilt)',r4:'Tilts the panel',p5:'I2C OLED display',r5:'Shows status',p6:'Small 6V solar panel',r6:'Measured source',p7:'Pink LED × 2',r7:'Base glow while moving',
+ foot:'Idea from a video by @marceline_tech. Simulation, code and wiring are written from scratch and may differ from the original build.',
+ N:'N',E:'E',S:'S',W:'W',horizon:'Horizon'}};
+let lang='ar';
+const t=k=>(TX[lang][k]??TX.ar[k]??k);
+function applyLang(l){lang=l;const h=document.documentElement;h.lang=l;h.dir=l==='ar'?'rtl':'ltr';
+  document.querySelectorAll('[data-i]').forEach(e=>{e.textContent=t(e.dataset.i)});
+  $('lAr').setAttribute('aria-pressed',l==='ar');$('lEn').setAttribute('aria-pressed',l==='en');
+  refreshBtns();try{localStorage.setItem('st-lang',l)}catch(e){}}
+function refreshBtns(){
+  $('play').textContent=S.play?t('pause'):t('play');
+  $('track').textContent=t('tracking')+': '+(S.track?t('on'):t('off'));
+  const on=document.body.classList.contains('display');$('show').firstElementChild.textContent=on?t('exit'):t('display')}
+
+/* ---------- physics ---------- */
+const S={sunA:100,sunE:20,cloud:0,play:true,track:true,speed:2,hour:7,panA:200,panE:20,eT:0,eF:0,moving:false,homing:false,f:[0,0,0],vA:0,vE:0,read:[0,0,0],err:0,pT:0,pF:0};
+const PMAX=600,LDR_HALF=rad(38),PHI=[90,210,330].map(rad);
+const histT=[],histF=[],HN=260;let sampleAcc=0;
+function nVec(A,E){A=rad(A);E=rad(E);return [Math.cos(E)*Math.sin(A),Math.cos(E)*Math.cos(A),Math.sin(E)]}
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+function basis(A,E){A=rad(A);E=rad(E);return{n:[Math.cos(E)*Math.sin(A),Math.cos(E)*Math.cos(A),Math.sin(E)],a:[Math.cos(A),-Math.sin(A),0],u:[-Math.sin(E)*Math.sin(A),-Math.sin(E)*Math.cos(A),Math.cos(E)]}}
+function ldrDirs(A,E){const b=basis(A,E);return PHI.map(p=>[0,1,2].map(k=>b.n[k]*Math.cos(LDR_HALF)+Math.sin(LDR_HALF)*(Math.cos(p)*b.a[k]+Math.sin(p)*b.u[k])))}
+function dayPos(h){if(h>=6&&h<=18){const f=(h-6)/12;return{A:90+180*f,E:Math.max(0,68*Math.sin(Math.PI*f))}}return{A:h>=24?90:270,E:-8}}
+const HOME={A:90,E:12};
+function syncSliders(){$('sA').value=Math.round(S.sunA);$('sE').value=Math.round(S.sunE);$('hr').value=S.hour}
+function setSun(a,e){S.sunA=(a+360)%360;S.sunE=clamp(e,0,90);syncSliders()}
+function applyDay(){const p=dayPos(S.hour);S.sunA=p.A;S.sunE=p.E;syncSliders()}
+
+function step(dt){
+  if(S.play){const night=S.hour>18||S.hour<6;S.hour+=dt*0.3*S.speed*(night?2.5:1);if(S.hour>=30)S.hour=6;applyDay()}
+  const s=nVec(S.sunA,S.sunE),dirs=ldrDirs(S.panA,S.panE),cl=1-S.cloud,k=Math.min(1,dt*10);
+  const raw=dirs.map(d=>clamp(Math.max(0,dot(d,s))*cl*1023,0,1023));
+  S.f=S.f.map((v,i)=>v+(raw[i]-v)*k);               // low-pass, like averaging analogRead
+  S.read=S.f.map(v=>Math.round(v));
+  const sum=S.f[0]+S.f[1]+S.f[2],maxV=70*Math.min(S.speed,3)/2;
+  let tvA=0,tvE=0,homing=false;
+  if(S.track){
+    if(sum/3>40&&S.sunE>0.5){
+      let ex=0,ey=0;for(let i=0;i<3;i++){ex+=S.f[i]*Math.cos(PHI[i]);ey+=S.f[i]*Math.sin(PHI[i])}
+      ex/=sum;ey/=sum;
+      if(Math.abs(ex)>0.015)tvA=clamp(ex*260,-maxV,maxV);
+      if(Math.abs(ey)>0.015)tvE=clamp(ey*260,-maxV,maxV);
+    }else if(S.sunE<=0.5){                           // sunset: return to the sunrise position
+      const hv=maxV*0.8,dA=((HOME.A-S.panA+540)%360)-180,dE=HOME.E-S.panE;
+      if(Math.abs(dA)>0.4){tvA=clamp(dA*1.5,-hv,hv);homing=true}
+      if(Math.abs(dE)>0.4){tvE=clamp(dE*1.5,-hv,hv);homing=true}
+    }
+  }
+  const a=Math.min(1,dt*5);S.vA+=(tvA-S.vA)*a;S.vE+=(tvE-S.vE)*a;   // eased start and stop
+  S.panA=(S.panA+S.vA*dt+360)%360;
+  const nE=S.panE+S.vE*dt;S.panE=clamp(nE,0,90);if(nE!==S.panE)S.vE=0;
+  S.moving=Math.abs(S.vA)>0.6||Math.abs(S.vE)>0.6;S.homing=homing&&S.moving;
+  const n=nVec(S.panA,S.panE);S.err=deg(Math.acos(clamp(dot(n,s),-1,1)));
+  S.pT=PMAX*Math.max(0,dot(n,s))*cl;S.pF=PMAX*Math.max(0,dot(nVec(180,30),s))*cl;
+  const hrs=dt*0.3*(S.play?S.speed:0);S.eT+=S.pT*hrs;S.eF+=S.pF*hrs;
+  sampleAcc+=dt;if(sampleAcc>0.12){sampleAcc=0;histT.push(S.pT);histF.push(S.pF);if(histT.length>HN){histT.shift();histF.shift()}}
+}
+
+/* ---------- drawing ---------- */
+function cv(id,ratio){const c=$(id),dpr=window.devicePixelRatio||1,w=c.clientWidth,h=Math.round(w*ratio);
+  if(c.width!==Math.round(w*dpr)||c.height!==Math.round(h*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);c.style.height=h+'px'}
+  const x=c.getContext('2d');x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);return{x,w,h}}
+function sunShape(x,px,py,r,C){const g=x.createRadialGradient(px,py,r*.3,px,py,r*3);g.addColorStop(0,C.accent);g.addColorStop(1,'transparent');
+  x.globalAlpha=.4*(1-S.cloud*.6);x.fillStyle=g;x.beginPath();x.arc(px,py,r*3,0,7);x.fill();x.globalAlpha=1;
+  x.fillStyle=C.accent;x.beginPath();x.arc(px,py,r,0,7);x.fill()}
+function cells(x,w,hh,C){x.fillStyle=C.cell;x.beginPath();x.roundRect(-w/2,-hh/2,w,hh,2);x.fill();x.fillStyle='rgba(255,255,255,.28)';
+  for(let i=1;i<8;i++)x.fillRect(-w/2+i*w/8,-hh/2,1,hh)}
+const geo={};
+
+function drawTop(C){
+  const{x,w,h}=cv('cTop',1);const cx=w/2,cy=h/2,R=w/2-30;geo.top={cx,cy,R};
+  x.strokeStyle=C.line;x.lineWidth=1;
+  for(const k of[.34,.67,1]){x.beginPath();x.arc(cx,cy,R*k,0,7);x.stroke()}
+  for(let a=0;a<360;a+=10){const s=Math.sin(rad(a)),c=-Math.cos(rad(a)),l=a%90===0?10:a%30===0?7:4;
+    x.beginPath();x.moveTo(cx+s*R,cy+c*R);x.lineTo(cx+s*(R+l),cy+c*(R+l));x.stroke()}
+  x.strokeStyle=C.accent;x.globalAlpha=.35;x.lineWidth=3;x.beginPath();x.arc(cx,cy,R,0,Math.PI);x.stroke();x.globalAlpha=1;
+  x.fillStyle=C.muted;x.font='500 12px '+C.font;x.textAlign='center';x.textBaseline='middle';
+  x.fillText(t('N'),cx,cy-R-22);x.fillText(t('S'),cx,cy+R+22);x.fillText(t('E'),cx+R+22,cy);x.fillText(t('W'),cx-R-22,cy);
+  const sa=rad(S.sunA),sx=cx+Math.sin(sa)*R,sy=cy-Math.cos(sa)*R;
+  if(S.sunE>=0){x.strokeStyle=C.accent;x.globalAlpha=.45;x.setLineDash([3,5]);x.lineWidth=1.5;x.beginPath();x.moveTo(cx,cy);x.lineTo(sx,sy);x.stroke();}x.setLineDash([]);x.globalAlpha=1;
+  x.fillStyle=C.surface;x.strokeStyle=C.line;x.lineWidth=1;x.beginPath();x.arc(cx,cy,R*.2,0,7);x.fill();x.stroke();
+  const A=rad(S.panA),reach=R*.2+R*.2*Math.cos(rad(S.panE));
+  x.save();x.translate(cx+Math.sin(A)*reach*.55,cy-Math.cos(A)*reach*.55);x.rotate(A);cells(x,R*.62,R*.1,C);x.restore();
+  ldrDirs(S.panA,S.panE).forEach((d,i)=>{const px=cx+d[0]*R*.62,py=cy-d[1]*R*.62,v=S.read[i]/1023;
+    x.fillStyle=C.accent;x.globalAlpha=.25+.75*v;x.beginPath();x.arc(px,py,5,0,7);x.fill();x.globalAlpha=1;x.strokeStyle=C.fg;x.lineWidth=1;x.stroke()});
+  if(S.sunE>=0)sunShape(x,sx,sy,8,C);
+}
+function drawSide(C){
+  const{x,w,h}=cv('cSide',1);const cx=w/2,cy=h*.8,R=w/2-30;geo.side={cx,cy,R};
+  const day=clamp(S.sunE/14,0,1)*(1-S.cloud*.35);
+  x.fillStyle=C.night;x.beginPath();x.roundRect(0,0,w,h,12);x.fill();
+  x.globalAlpha=day;x.fillStyle=C.day;x.beginPath();x.roundRect(0,0,w,h,12);x.fill();x.globalAlpha=1;
+  x.fillStyle=C.ground;x.fillRect(0,cy,w,h-cy);
+  x.strokeStyle=C.skyLine;x.lineWidth=1;x.globalAlpha=.5;x.beginPath();x.arc(cx,cy,R*.5,Math.PI,0);x.stroke();x.beginPath();x.arc(cx,cy,R,Math.PI,0);x.stroke();x.globalAlpha=1;
+  // sun path
+  x.fillStyle=C.accent;x.globalAlpha=.5;for(let hh=6;hh<=18;hh+=.5){const p=dayPos(hh),g=Math.sin(rad(p.A))>=0?1:-1;
+    x.beginPath();x.arc(cx+g*Math.cos(rad(p.E))*R,cy-Math.sin(rad(p.E))*R,1.6,0,7);x.fill()}x.globalAlpha=1;
+  const sg=Math.sin(rad(S.sunA))>=0?1:-1,se=rad(S.sunE),sx=cx+sg*Math.cos(se)*R,sy=cy-Math.sin(se)*R;
+  if(S.sunE>=0){x.strokeStyle=C.accent;x.globalAlpha=.4;x.setLineDash([3,5]);x.lineWidth=1.5;x.beginPath();x.moveTo(cx,cy-R*.2);x.lineTo(sx,sy);x.stroke();}x.setLineDash([]);x.globalAlpha=1;
+  // device
+  const bw=R*.62;x.fillStyle=C.surface;x.strokeStyle=C.line;x.lineWidth=1;
+  x.beginPath();x.roundRect(cx-bw/2,cy-R*.1,bw,R*.1,8);x.fill();x.stroke();
+  x.fillStyle=C.accent;x.globalAlpha=S.moving?1:.35;[-1,1].forEach(g=>{x.beginPath();x.arc(cx+g*bw*.36,cy-R*.05,3,0,7);x.fill()});x.globalAlpha=1;
+  x.fillStyle=C.surface;x.beginPath();x.roundRect(cx-R*.07,cy-R*.24,R*.14,R*.16,5);x.fill();x.stroke();
+  const pg=Math.sin(rad(S.panA))>=0?1:-1,pe=rad(S.panE),nx=pg*Math.cos(pe),ny=-Math.sin(pe);
+  x.save();x.translate(cx,cy-R*.27);x.rotate(Math.atan2(ny,nx)+Math.PI/2);
+  x.fillStyle=C.surface;x.strokeStyle=C.line;x.beginPath();x.roundRect(-R*.36,-6,R*.72,12,3);x.fill();x.stroke();
+  x.translate(0,-1);cells(x,R*.68,6,C);
+  x.strokeStyle=C.accent;x.globalAlpha=.55;x.lineWidth=1.5;x.beginPath();x.moveTo(0,-8);x.lineTo(0,-R*.3*Math.min(1,S.pT/PMAX+.2));x.stroke();x.restore();x.globalAlpha=1;
+  x.fillStyle=C.muted;x.font='12px '+C.font;x.textAlign='center';x.textBaseline='middle';x.fillText(t('horizon'),cx,cy+(h-cy)/2);
+  if(S.sunE>=0)sunShape(x,sx,sy,8,C);
+}
+function drawChart(C){
+  const wd=$('cChart').clientWidth;const{x,w,h}=cv('cChart',wd>600?.24:.52);const pl=40,pr=8,pt=8,pb=8,iw=w-pl-pr,ih=h-pt-pb;
+  x.font='11px '+C.mono;x.fillStyle=C.muted;x.strokeStyle=C.line;x.lineWidth=1;x.textAlign='right';x.textBaseline='middle';
+  for(let i=0;i<=3;i++){const y=pt+ih-ih*i/3;x.beginPath();x.moveTo(pl,y);x.lineTo(w-pr,y);x.stroke();x.fillText(Math.round(PMAX*i/3)+'',pl-8,y)}
+  const Y=v=>pt+ih-ih*clamp(v/PMAX,0,1),X=i=>pl+iw*i/(HN-1);
+  const line=(arr,c,wd2)=>{x.strokeStyle=c;x.lineWidth=wd2;x.lineJoin='round';x.beginPath();arr.forEach((v,i)=>{i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v))});x.stroke()};
+  if(histT.length>1){
+    const g=x.createLinearGradient(0,pt,0,pt+ih);g.addColorStop(0,C.cell+'55');g.addColorStop(1,C.cell+'00');
+    x.beginPath();histT.forEach((v,i)=>{i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v))});x.lineTo(X(histT.length-1),pt+ih);x.lineTo(X(0),pt+ih);x.closePath();x.fillStyle=g;x.fill();
+    line(histF,C.muted,1.6);line(histT,C.cell,2.4);
+    const i=histT.length-1;x.fillStyle=C.cell;x.beginPath();x.arc(X(i),Y(histT[i]),4,0,7);x.fill()}
+}
+
+function ui(){
+  $('sAv').textContent=Math.round(S.sunA)+'°';$('sEv').textContent=Math.round(S.sunE)+'°';
+  $('clv').textContent=Math.round(S.cloud*100)+'%';$('spv').textContent='×'+S.speed;
+  $('azTxt').textContent=Math.round(S.panA)+'°';$('elTxt').textContent=Math.round(S.panE)+'°';
+  $('pA').textContent=S.panA.toFixed(0)+'°';$('pE').textContent=S.panE.toFixed(0)+'°';$('err').textContent=S.err.toFixed(1)+'°';
+  const hh=Math.floor(S.hour)%24,mm=Math.floor((S.hour-hh)*60),ct=String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+  $('clock').textContent=S.play?ct:t('manual');$('oT').textContent=ct;
+  for(let i=0;i<3;i++){$('v'+i).textContent=S.read[i];$('b'+i).style.height=(S.read[i]/1023*100)+'%'}
+  $('oP').textContent=Math.round(S.pT)+' mW';
+  const low=S.sunE<=0.5||(1-S.cloud)*Math.max(...S.read)/1023<0.04;
+  const st=!S.track?'LOCKED':S.homing?'HOMING':low?'WAITING':S.moving?'TRACKING':'ALIGNED';$('oS').textContent=st;
+  const chip=$('state');chip.className='chip '+(st==='TRACKING'||st==='HOMING'?'run':st==='ALIGNED'?'ok':'idle');
+  chip.textContent=t(st==='HOMING'?'stHome':st==='TRACKING'?'stRun':st==='ALIGNED'?'stOk':st==='WAITING'?'stIdle':'stLock');
+  $('l1').classList.toggle('on',S.moving);$('l2').classList.toggle('on',S.moving);
+  $('eT').textContent=S.eT.toFixed(0)+' mWh';$('eF').textContent=S.eF.toFixed(0)+' mWh';
+  const g=$('gain');g.hidden=!(S.eF>5);g.textContent=S.eF>5?t('gainL')+' +'+((S.eT/S.eF-1)*100).toFixed(0)+'%':'';
+}
+let last=performance.now();
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;step(dt);
+  const st=getComputedStyle(document.documentElement),g=n=>st.getPropertyValue(n).trim();
+  const C={line:g('--line'),muted:g('--muted'),fg:g('--fg'),surface:g('--surface'),accent:g('--accent'),cell:g('--cell'),day:g('--sky-day'),night:g('--sky-night'),ground:g('--ground'),
+    skyLine:g('--muted'),font:'Readex Pro, system-ui, sans-serif',mono:'JetBrains Mono, monospace'};
+  drawTop(C);drawSide(C);drawChart(C);ui();requestAnimationFrame(frame)}
+
+/* ---------- input ---------- */
+function pause(){S.play=false;$('play').setAttribute('aria-pressed','false');refreshBtns()}
+$('sA').oninput=e=>{pause();S.sunA=+e.target.value};
+$('sE').oninput=e=>{pause();S.sunE=+e.target.value};
+$('hr').oninput=e=>{pause();S.hour=+e.target.value;applyDay()};
+$('cl').oninput=e=>{S.cloud=+e.target.value/100};
+$('sp').oninput=e=>{S.speed=+e.target.value};
+$('play').onclick=()=>{S.play=!S.play;if(S.play&&(S.hour<6||S.hour>18))S.hour=6;$('play').setAttribute('aria-pressed',S.play);refreshBtns()};
+$('track').onclick=()=>{S.track=!S.track;$('track').setAttribute('aria-pressed',S.track);refreshBtns()};
+$('reset').onclick=()=>{S.eT=S.eF=0;histT.length=histF.length=0};
+function drag(id,fn){const c=$(id);let on=false;
+  const mv=e=>{const r=c.getBoundingClientRect();fn((e.clientX-r.left)*(c.clientWidth/r.width),(e.clientY-r.top)*(c.clientHeight/r.height))};
+  c.addEventListener('pointerdown',e=>{on=true;c.setPointerCapture(e.pointerId);c.style.cursor='grabbing';pause();mv(e)});
+  c.addEventListener('pointermove',e=>{if(on)mv(e)});
+  const up=()=>{on=false;c.style.cursor='grab'};c.addEventListener('pointerup',up);c.addEventListener('pointercancel',up)}
+drag('cTop',(px,py)=>{const g=geo.top;if(g)setSun(deg(Math.atan2(px-g.cx,-(py-g.cy))),S.sunE)});
+drag('cSide',(px,py)=>{const g=geo.side;if(!g)return;const dx=px-g.cx,dy=g.cy-py;
+  const e=deg(Math.atan2(Math.max(dy,0),Math.abs(dx))),a=S.sunA,east=Math.sin(rad(a))>=0,flip=(dx>=0)!==east&&Math.abs(dx)>6;
+  setSun(flip?360-a:a,e)});
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));
+  ['how','wire','code'].forEach(k=>$('t-'+k).hidden=(k!==b.dataset.t))});
+$('lAr').onclick=()=>applyLang('ar');$('lEn').onclick=()=>applyLang('en');
+$('show').onclick=()=>{const on=!document.body.classList.contains('display');
+  document.body.classList.toggle('display',on);$('show').setAttribute('aria-pressed',on);refreshBtns();
+  try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});
+    else if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}catch(e){}
+  if(on&&!S.play){S.play=true;$('play').setAttribute('aria-pressed','true');refreshBtns()}};
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&document.body.classList.contains('display'))$('show').click()});
+
+let saved=null;try{saved=localStorage.getItem('st-lang')}catch(e){}
+applyLang(saved==='en'||saved==='ar'?saved:(navigator.language||'').toLowerCase().startsWith('ar')?'ar':'ar');
+applyDay();requestAnimationFrame(frame);
+})();
+</script>
+</body></html>
